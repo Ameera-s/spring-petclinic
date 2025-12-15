@@ -1,0 +1,72 @@
+pipeline {
+    agent any
+    tools {
+        maven "maven3"
+		jdk "java8"
+    }
+    environment {
+      SCANNER_HOME = tool 'sonar_scanner'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                script {
+                    // Let's clone the source
+                   git credentialsId: 'github_credentials', url: 'https://github.com/jmstechops2/spring-petclinic.git'
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh 'mvn clean package'
+            }
+        }
+        
+        stage('SonarQube Analysis (FORCED Java 11)') {
+            steps {
+                withSonarQubeEnv(
+                    installationName: 'sonar',
+                    credentialsId: 'sonar_credentials'
+                ) {
+                    sh '''
+                      export JAVA_HOME=/usr/lib/jvm/java-11-openjdk
+                      export PATH=$JAVA_HOME/bin:$PATH
+
+                      echo "Sonar JVM:"
+                      java -version
+
+                      $SCANNER_HOME/bin/sonar-scanner
+                    '''
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                script {
+                    // Check the SonarQube quality gate status
+                    def qualityGate = waitForQualityGate()
+                    if (qualityGate.status != 'OK') {
+                        error "Quality Gate failed: ${qualityGate.status}"
+                    }
+                }
+            }
+        }
+    }
+    post {
+        failure {
+            script {
+                currentBuild.result = 'FAILURE'
+            }
+        }
+
+        always {
+            step([$class: 'Mailer',
+                notifyEveryUnstableBuild: true,
+                recipients: "jmstechops2@gmail.com",
+                sendToIndividuals: true])
+        }
+    }
+}
